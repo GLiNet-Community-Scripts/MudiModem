@@ -17,6 +17,9 @@ esac
 # Must stay in lockstep with install.sh's sysupgrade list (minus /etc/config/mudi,
 # which is user config and intentionally kept).
 FILES="
+/lib/upgrade/keep.d/mudimodem
+/etc/nginx/gl-conf.d/mudimodem.conf
+/usr/share/mudimodem
 /www/views/gl-sdk4-ui-mudimodem.common.js.gz
 /www/views/gl-sdk4-ui-mudimodem-tracking.common.js.gz
 /www/views/gl-sdk4-ui-mudimodem-console.common.js.gz
@@ -85,11 +88,15 @@ fi
 echo "LCD renderer stopped; front panel returned to gl_screen"
 
 echo "removing files:"
-for p in $FILES; do [ -e "$p" ] && rm -f "$p" && echo "  $p"; done
+for p in $FILES; do
+  if [ -d "$p" ]; then rm -rf "$p" && echo "  $p"
+  elif [ -e "$p" ]; then rm -f "$p" && echo "  $p"
+  fi
+done
 
 # Our own dirs + runtime state (pending-revert marker, version, battlimit,
 # speedtest history). Only remove if empty/ours.
-rm -rf /usr/lib/mudimodem /www/mudimodem /etc/mudimodem 2>/dev/null || true
+rm -rf /usr/lib/mudimodem /www/mudimodem /etc/mudimodem /usr/share/mudimodem 2>/dev/null || true
 
 # De-register from sysupgrade.conf (drop exactly our lines, keep everything else).
 # Per-line loop is portable across busybox/GNU grep (multi-line -F is not).

@@ -31,16 +31,29 @@ cp_install()  { grab "$1"; cat "$tmp" > "$2"; chmod "$3" "$2"; rm -f "$tmp"; ech
 
 mkdir -p /www/views /www/mudimodem /usr/lib/mudimodem /usr/share/oui/menu.d \
          /usr/share/gl-validator.d /usr/lib/oui-httpd/rpc /usr/sbin /usr/bin \
-         /etc/init.d /etc/mudimodem /etc/hotplug.d/i2c
+         /etc/init.d /etc/mudimodem /etc/hotplug.d/i2c \
+         /usr/share/mudimodem/www/views /usr/share/mudimodem/www/mudimodem \
+         /etc/nginx/gl-conf.d /lib/upgrade/keep.d
+
+# Dual-write a /www file into the FOTA persist tree. abfota drops /www.
+persist_www() { cp -f "$1" "/usr/share/mudimodem/www/${1#/www/}"; echo "  /usr/share/mudimodem/www/${1#/www/}"; }
 
 echo "installing view chunks + menu + library:"
 gz_install src/views/mudimodem.js          /www/views/gl-sdk4-ui-mudimodem.common.js.gz
+persist_www /www/views/gl-sdk4-ui-mudimodem.common.js.gz
 gz_install src/views/mudimodem-tracking.js /www/views/gl-sdk4-ui-mudimodem-tracking.common.js.gz
+persist_www /www/views/gl-sdk4-ui-mudimodem-tracking.common.js.gz
 gz_install src/views/mudimodem-console.js  /www/views/gl-sdk4-ui-mudimodem-console.common.js.gz
+persist_www /www/views/gl-sdk4-ui-mudimodem-console.common.js.gz
 gz_install src/views/mudimodem-speedtest.js /www/views/gl-sdk4-ui-mudimodem-speedtest.common.js.gz
+persist_www /www/views/gl-sdk4-ui-mudimodem-speedtest.common.js.gz
 # Battery tab is an in-page lazy chunk (no menu JSON) — same pattern as Tracking.
 gz_install src/views/mudimodem-battery.js  /www/views/gl-sdk4-ui-mudimodem-battery.common.js.gz
+persist_www /www/views/gl-sdk4-ui-mudimodem-battery.common.js.gz
 gz_install src/at-library.snapshot.json    /www/mudimodem/at-library.json.gz
+persist_www /www/mudimodem/at-library.json.gz
+cp_install src/upgrade/keep.d/mudimodem    /lib/upgrade/keep.d/mudimodem           0644
+cp_install src/nginx/mudimodem.conf        /etc/nginx/gl-conf.d/mudimodem.conf     0644
 cp_install src/menu/mudimodem.json          /usr/share/oui/menu.d/mudimodem.json          0644
 cp_install src/menu/mudimodem-tracking.json /usr/share/oui/menu.d/mudimodem-tracking.json 0644
 cp_install src/menu/mudimodem-speedtest.json /usr/share/oui/menu.d/mudimodem-speedtest.json 0644
@@ -178,6 +191,9 @@ for p in \
   /usr/bin/mudi-watch.py \
   /etc/init.d/mudi \
   /etc/init.d/mudi-watch \
+  /lib/upgrade/keep.d/mudimodem \
+  /etc/nginx/gl-conf.d/mudimodem.conf \
+  /usr/share/mudimodem \
 ; do grep -qxF "$p" "$f" || echo "$p" >> "$f"; done
 echo "  done"
 

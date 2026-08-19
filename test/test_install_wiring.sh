@@ -68,4 +68,54 @@ done
 grep -E '/etc/init\.d/mudi(-watch)? (enable|start)' install.sh \
   && fail "install must not enable/start mudi services" || true
 
+# --- A/B FOTA persist (e5800 uses /lib/upgrade/keep.d, not sysupgrade.conf) ---
+# abfota_update cats keep.d and copies only /etc /usr /lib /bin /sbin /data /var.
+# /www is silently dropped, so view chunks must live under /usr/share/mudimodem.
+[ -f src/upgrade/keep.d/mudimodem ] || fail "missing src/upgrade/keep.d/mudimodem"
+[ -f src/nginx/mudimodem.conf ]     || fail "missing src/nginx/mudimodem.conf"
+
+grep -qxF '/lib/upgrade/keep.d/mudimodem' src/upgrade/keep.d/mudimodem \
+  || fail "keep.d must list itself (next upgrade has to see it)"
+grep -qxF '/etc/nginx/gl-conf.d/mudimodem.conf' src/upgrade/keep.d/mudimodem \
+  || fail "keep.d must list the nginx alias"
+grep -qxF '/usr/share/mudimodem/' src/upgrade/keep.d/mudimodem \
+  || fail "keep.d must list /usr/share/mudimodem/ (the FOTA-restorable view payload)"
+grep -qxF '/usr/lib/oui-httpd/rpc/mudimodem' src/upgrade/keep.d/mudimodem \
+  || fail "keep.d must list the rpc plugin"
+grep -E '^[[:space:]]*/www/' src/upgrade/keep.d/mudimodem \
+  && fail "keep.d must not list /www (abfota silently drops it)" || true
+
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    ''|'#'*|\#*) continue ;;
+    /etc/*|/usr/*|/lib/*|/bin/*|/sbin/*|/data/*|/var/*) ;;
+    *) fail "keep.d path not in abfota backup prefixes: $line" ;;
+  esac
+done < src/upgrade/keep.d/mudimodem
+
+grep -q 'location ^~ /views/gl-sdk4-ui-mudimodem' src/nginx/mudimodem.conf \
+  || fail "nginx conf must prefix-match /views/gl-sdk4-ui-mudimodem"
+grep -q 'root /usr/share/mudimodem/www' src/nginx/mudimodem.conf \
+  || fail "nginx conf must root at the persist www tree"
+grep -q 'location ^~ /mudimodem/' src/nginx/mudimodem.conf \
+  || fail "nginx conf must serve /mudimodem/ (AT library)"
+
+grep -q '/lib/upgrade/keep.d/mudimodem' install.sh \
+  || fail "install.sh must install keep.d"
+grep -q '/etc/nginx/gl-conf.d/mudimodem.conf' install.sh \
+  || fail "install.sh must install nginx conf"
+grep -q '/usr/share/mudimodem/www/views' install.sh \
+  || fail "install.sh must install the FOTA view payload"
+grep -q '/lib/upgrade/keep.d/mudimodem' tools/deploy.sh \
+  || fail "deploy.sh must install keep.d"
+grep -q '/usr/share/mudimodem/www' tools/deploy.sh \
+  || fail "deploy.sh must install the FOTA view payload"
+
+grep -q '/lib/upgrade/keep.d/mudimodem' uninstall.sh \
+  || fail "uninstall must remove keep.d"
+grep -q '/etc/nginx/gl-conf.d/mudimodem.conf' uninstall.sh \
+  || fail "uninstall must remove nginx conf"
+grep -q '/usr/share/mudimodem' uninstall.sh \
+  || fail "uninstall must remove the persist tree"
+
 echo "install wiring OK"

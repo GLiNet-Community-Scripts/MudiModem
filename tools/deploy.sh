@@ -58,6 +58,25 @@ ssh -o BatchMode=yes "root@$HOST" 'cat > /www/views/gl-sdk4-ui-mudimodem-battery
   < build/gl-sdk4-ui-mudimodem-battery.common.js.gz
 echo "battery chunk deployed"
 
+# FOTA persist payload. abfota ignores sysupgrade.conf and drops /www, so a
+# second copy lives under /usr/share/mudimodem/www and nginx aliases the SPA
+# URLs onto it. Must exist BEFORE the nginx restart that loads mudimodem.conf.
+ssh -o BatchMode=yes "root@$HOST" 'mkdir -p /usr/share/mudimodem/www/views /usr/share/mudimodem/www/mudimodem /etc/nginx/gl-conf.d /lib/upgrade/keep.d'
+ssh -o BatchMode=yes "root@$HOST" 'for f in \
+    gl-sdk4-ui-mudimodem.common.js.gz \
+    gl-sdk4-ui-mudimodem-tracking.common.js.gz \
+    gl-sdk4-ui-mudimodem-console.common.js.gz \
+    gl-sdk4-ui-mudimodem-speedtest.common.js.gz \
+    gl-sdk4-ui-mudimodem-battery.common.js.gz; do
+  cp -f "/www/views/$f" "/usr/share/mudimodem/www/views/$f"
+done
+cp -f /www/mudimodem/at-library.json.gz /usr/share/mudimodem/www/mudimodem/at-library.json.gz'
+ssh -o BatchMode=yes "root@$HOST" 'cat > /lib/upgrade/keep.d/mudimodem' \
+  < src/upgrade/keep.d/mudimodem
+ssh -o BatchMode=yes "root@$HOST" 'cat > /etc/nginx/gl-conf.d/mudimodem.conf' \
+  < src/nginx/mudimodem.conf
+echo "FOTA persist tree + keep.d + nginx alias deployed"
+
 if [ -f src/sbin/mudimodem-speedtestd ]; then
   ssh -o BatchMode=yes "root@$HOST" 'cat > /usr/sbin/mudimodem-speedtestd && chmod 0755 /usr/sbin/mudimodem-speedtestd' \
     < src/sbin/mudimodem-speedtestd
@@ -208,6 +227,9 @@ ssh -o BatchMode=yes "root@$HOST" 'f=/etc/sysupgrade.conf; touch "$f"; for p in 
   /etc/mudimodem/battlimit.json \
   /etc/mudimodem/history.json \
   /etc/mudimodem/history \
+  /lib/upgrade/keep.d/mudimodem \
+  /etc/nginx/gl-conf.d/mudimodem.conf \
+  /usr/share/mudimodem \
   ; do \
   grep -qxF "$p" "$f" || echo "$p" >> "$f" ; done'
 echo "sysupgrade.conf registered"

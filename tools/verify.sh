@@ -48,6 +48,20 @@ ssh -o BatchMode=yes "root@$HOST" 'test -s /www/views/gl-sdk4-ui-mudimodem.commo
 ssh -o BatchMode=yes "root@$HOST" 'test -s /usr/share/oui/menu.d/mudimodem.json' \
   || fail "menu json missing"
 
+echo "1b. A/B FOTA persist (keep.d + payload + nginx alias)"
+ssh -o BatchMode=yes "root@$HOST" 'test -s /lib/upgrade/keep.d/mudimodem' \
+  || fail "keep.d/mudimodem missing"
+ssh -o BatchMode=yes "root@$HOST" 'grep -qxF /lib/upgrade/keep.d/mudimodem /lib/upgrade/keep.d/mudimodem \
+  && grep -qxF /usr/share/mudimodem/ /lib/upgrade/keep.d/mudimodem \
+  && grep -qxF /etc/nginx/gl-conf.d/mudimodem.conf /lib/upgrade/keep.d/mudimodem \
+  && ! grep -E "^[[:space:]]*/www/" /lib/upgrade/keep.d/mudimodem' \
+  || fail "keep.d missing self/payload/nginx entries or still lists /www"
+ssh -o BatchMode=yes "root@$HOST" 'test -s /usr/share/mudimodem/www/views/gl-sdk4-ui-mudimodem.common.js.gz \
+  && test -s /usr/share/mudimodem/www/mudimodem/at-library.json.gz \
+  && test -s /etc/nginx/gl-conf.d/mudimodem.conf \
+  && grep -q "root /usr/share/mudimodem/www" /etc/nginx/gl-conf.d/mudimodem.conf' \
+  || fail "FOTA persist payload or nginx alias missing"
+
 echo "2. menu json is valid JSON on-device"
 ssh -o BatchMode=yes "root@$HOST" \
   'lua -e "local c=require(\"cjson\"); local f=io.open(\"/usr/share/oui/menu.d/mudimodem.json\"); c.decode(f:read(\"*a\"))"' \

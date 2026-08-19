@@ -158,7 +158,9 @@ return { get_config = function(args) ... end, set_config = function(args) ... en
 | File | Role |
 |---|---|
 | `/usr/lib/oui-httpd/rpc/mudimodem` | Lua backend; safe validated methods; dotted ubus calls |
-| `/www/views/gl-sdk4-ui-mudimodem.common.js.gz` | the Vue page (gzipped — `gzip_static on`) |
+| `/www/views/gl-sdk4-ui-mudimodem.common.js.gz` | the Vue page (gzipped — `gzip_static on`); also copied to `/usr/share/mudimodem/www/` for FOTA |
+| `/lib/upgrade/keep.d/mudimodem` | A/B FOTA keep list (e5800 ignores sysupgrade.conf; see §9) |
+| `/etc/nginx/gl-conf.d/mudimodem.conf` | aliases SPA `/views/gl-sdk4-ui-mudimodem*` + `/mudimodem/` onto the persist tree |
 | `/usr/share/oui/menu.d/mudimodem.json` | menu registration **+ `global_sockets`** (§2) — the read path |
 | `/usr/sbin/mudimodem-revert` | detached auto-revert watchdog + ssh panic-restore |
 | `/www/mudimodem/at-library.json.gz` | community AT command library (§7a); static, axios-fetched |
@@ -543,9 +545,13 @@ router and searchable. It's a differentiator no router UI has.
   good→`--info-hover`, excellent→`--success`.
 
 ## 9. Persistence & risk
-- All four files live **outside `/etc/config/`** → wiped by a firmware upgrade unless listed in
-  **`/etc/sysupgrade.conf`**; a factory reset wipes them regardless. Same story as MudiUI §10 —
-  the installer must register them idempotently.
+- e5800 upgrades run **`abfota_update start-fota -k`**, not `/sbin/sysupgrade`. That script
+  reads **`/lib/upgrade/keep.d/*` only** — `/etc/sysupgrade.conf` is ignored. It copies
+  `/etc` `/usr` `/lib` `/bin` `/sbin` `/data` `/var` and **silently drops `/www`**.
+- Installer ships `/lib/upgrade/keep.d/mudimodem` (self-listed) + a second copy of the view
+  chunks at `/usr/share/mudimodem/www/` + `/etc/nginx/gl-conf.d/mudimodem.conf` (aliases the
+  SPA URLs onto that tree). Requires **Keep settings** (`-k`). Factory reset still wipes.
+- `/etc/sysupgrade.conf` is still registered for a hypothetical non-e5800 sysupgrade path.
 - Band/cell lock persists in **modem NV** — it survives reflash *and* factory reset. The panic
   restore is the only way back.
 - The Mudi is a travel router on cellular — reachability is intermittent by design.
@@ -573,6 +579,8 @@ MudiModem/
 │   ├── at-library.snapshot.json ← baked fallback; sources in kevinherzig/mudi7-at-library (§7a)
 │   ├── rpc/mudimodem            ← backend, incl. get_lcd/set_lcd (§12, 2026-07-24 merge)
 │   ├── sbin/mudimodem-collectd  ← single modem-read daemon; broadcasts over Unix socket + latest.json
+│   ├── upgrade/keep.d/mudimodem ← A/B FOTA keep list (e5800; see §9)
+│   ├── nginx/mudimodem.conf     ← gl-conf.d alias: SPA URLs → /usr/share/mudimodem/www
 │   └── lcd/                     ← vendored MudiUI front-LCD renderer (mudi.py, mudi-watch.py,
 │                                    mudi.init, mudi-watch.init, mudi.config); default off
 ├── tools/
@@ -805,9 +813,8 @@ MudiModem/
    exists on `/dev/at_mdm0` (`QSIMSWITCH`/`QDSDS`/`QMSIMCFG` all ERROR; `QCFG=?`/`QNWPREFCFG=?`
    list nothing sub-related). GL's `sub_id` is a QMI-layer thing behind `modem_AT`. Cross-SIM data
    stays on GL's `modem.CPU.AT`; the console is active-SIM only and labeled as such.
-- ✅ `/etc/sysupgrade.conf` **is** registered by `./tools/deploy.sh` (idempotent
-  `grep -qxF … || echo … >> "$f"`), covering every shipped file. **Any new shipped file must be
-  added to that list**, or a firmware upgrade wipes it. Still not done: `install.sh`/`uninstall.sh`,
-  a boot hook for the watchdog `boot-check`, and an ipk.
+- ✅ **A/B FOTA persist (2026-08-18).** e5800 ignores `/etc/sysupgrade.conf`. Persistence is
+  `/lib/upgrade/keep.d/mudimodem` + `/usr/share/mudimodem/` + nginx alias (same pattern as
+  ts-fix on this box). Still not done: a boot hook for the watchdog `boot-check`, and an ipk.
 - 🧹 `tools/verify.sh` still only checks the menu JSON *parses*; it should also assert
   `get_menu_list` returns it at `level:1` (§8 has the stub).

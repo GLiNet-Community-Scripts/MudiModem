@@ -1,0 +1,49 @@
+# MudiModem — A/B FOTA persistence.
+# e5800 runs `abfota_update start-fota -k`, which cats /lib/upgrade/keep.d
+# and ignores /etc/sysupgrade.conf. It copies only /etc /usr /lib /bin /sbin
+# /data /var — /www is dropped even if listed. View chunks therefore live
+# under /usr/share/mudimodem/ and nginx aliases the SPA URLs onto that tree.
+
+# This file (self-preservation for the next upgrade)
+/lib/upgrade/keep.d/mudimodem
+
+# nginx alias: /views/gl-sdk4-ui-mudimodem* and /mudimodem/
+/etc/nginx/gl-conf.d/mudimodem.conf
+
+# View chunks + AT library (the copies abfota will actually restore)
+/usr/share/mudimodem/
+
+# RPC + menus + validator + tools
+/usr/lib/oui-httpd/rpc/mudimodem
+/usr/share/oui/menu.d/mudimodem.json
+/usr/share/oui/menu.d/mudimodem-tracking.json
+/usr/share/oui/menu.d/mudimodem-speedtest.json
+/usr/share/gl-validator.d/mudimodem.lua
+/usr/lib/mudimodem/
+/usr/sbin/mudimodem-revert
+/usr/sbin/mudimodem-selfupdate
+/usr/sbin/mudimodem-collectd
+/usr/sbin/mudimodem-speedtestd
+/usr/bin/glbattlimit
+/usr/bin/mudi.py
+/usr/bin/mudi-watch.py
+
+# Init + hotplug + state
+/etc/init.d/mudimodem-collectd
+/etc/init.d/mudimodem-speedtestd
+/etc/init.d/glbattlimit
+/etc/init.d/mudi
+/etc/init.d/mudi-watch
+/etc/hotplug.d/i2c/20-glbattlimit
+/etc/mudimodem/
+
+# Procd enable-symlinks (absent files are skipped at backup time)
+/etc/rc.d/S95mudimodem-collectd
+/etc/rc.d/K10mudimodem-collectd
+/etc/rc.d/S96mudimodem-speedtestd
+/etc/rc.d/K10mudimodem-speedtestd
+/etc/rc.d/S99glbattlimit
+/etc/rc.d/S99mudi
+/etc/rc.d/K10mudi
+/etc/rc.d/S98mudi-watch
+/etc/rc.d/K11mudi-watch
