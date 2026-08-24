@@ -479,4 +479,31 @@ else
   echo "14b. SKIPPED — set MM_PW=<admin-password> to run the get_lcd/set_lcd /rpc round-trip"
 fi
 
+# 15. LCD python dependency guard. The 4.10 A/B FOTA wiped site-packages and left
+# both LCD services crash-looping on ModuleNotFoundError while gl_screen kept the
+# panel (§9). Assert the guard is installed, agrees with reality, and that no
+# LCD service is sitting in a crash loop right now.
+echo "15. LCD dep guard (mudimodem-lcddeps)"
+ssh -o BatchMode=yes "root@$HOST" 'test -x /usr/sbin/mudimodem-lcddeps' \
+  || fail "mudimodem-lcddeps missing or not executable"
+ssh -o BatchMode=yes "root@$HOST" 'grep -q /usr/sbin/mudimodem-lcddeps /lib/upgrade/keep.d/mudimodem' \
+  || fail "mudimodem-lcddeps not in keep.d — it would not survive the next FOTA"
+for f in /etc/init.d/mudi /etc/init.d/mudi-watch; do
+  ssh -o BatchMode=yes "root@$HOST" "test -f $f" || continue
+  ssh -o BatchMode=yes "root@$HOST" "grep -q mudimodem-lcddeps $f" \
+    || fail "$f does not gate procd on the dep check (post-FOTA crash loop returns)"
+done
+# Stubbed behaviour test — installs nothing, touches no service.
+ssh -o BatchMode=yes "root@$HOST" 'cat > /tmp/mm-lcddeps.test.sh' < test/lcddeps.test.sh
+ssh -o BatchMode=yes "root@$HOST" 'cd /tmp && sh /tmp/mm-lcddeps.test.sh /usr/sbin/mudimodem-lcddeps >/dev/null; rc=$?; rm -f /tmp/mm-lcddeps.test.sh; exit $rc' \
+  || fail "mudimodem-lcddeps behaviour test failed"
+# Live: if the renderer is installed, its imports must actually work.
+if ssh -o BatchMode=yes "root@$HOST" 'test -f /usr/bin/mudi.py'; then
+  ssh -o BatchMode=yes "root@$HOST" '/usr/sbin/mudimodem-lcddeps check' \
+    || fail "LCD python deps are missing on the box — run: mudimodem-lcddeps heal"
+  ssh -o BatchMode=yes "root@$HOST" '! logread | tail -200 | grep -q ModuleNotFoundError' \
+    || fail "a service is crash-looping on ModuleNotFoundError (see logread)"
+  echo "   deps import OK, no crash loop"
+fi
+
 echo "ALL CHECKS PASSED"

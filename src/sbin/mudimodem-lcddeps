@@ -1,0 +1,182 @@
+#!/bin/sh
+# MudiModem — LCD front-panel Python dependency guard and self-heal.
+#
+# WHY THIS EXISTS
+# ---------------
+# The e5800 upgrades via `abfota_update start-fota -k`, which restores only the
+# paths listed in /lib/upgrade/keep.d/*. Our own files are listed there and come
+# back fine — but the renderer's *runtime* does not: numpy / evdev / PIL are
+# opkg packages living in /usr/lib/python3.N/site-packages, outside our tree.
+#
+# Observed live 2026-08-24 after the 4.8.5 -> 4.10.0 FOTA: every MudiModem file
+# survived, site-packages held nothing but README.txt, and both mudi.py and
+# mudi-watch.py crash-looped on ModuleNotFoundError while gl_screen kept the
+# panel. The web admin was entirely unaffected, which is what made it look like
+# an LCD bug rather than an upgrade artefact.
+#
+# WHY opkg AND NOT keep.d
+# -----------------------
+# Listing site-packages in keep.d would add ~30 MB (numpy alone is 26 MB) to the
+# keep set, on the same /dev/mmcblk0p66 that filled to 100% and silently killed
+# an upgrade once already (see diagnose.md). It would also break the moment a
+# firmware ships a different Python minor: restored 3.11 modules land in a stale
+# directory and are simply ignored, deps still missing, no diagnostic. Asking
+# opkg to fetch the build that matches the *running* interpreter costs no keep
+# space and is version-correct by construction. The price is needing the network
+# at first boot, which `heal` handles by waiting for it.
+#
+# This script is the SINGLE SOURCE OF TRUTH for the dependency list. install.sh
+# and the two init scripts all call it, so the list cannot drift between the
+# install path and the boot path.
+#
+# USAGE
+#   mudimodem-lcddeps check          # exit 0 if every module imports; silent. No network.
+#   mudimodem-lcddeps install        # install what is missing; do NOT touch services.
+#   mudimodem-lcddeps heal           # wait for network, install, then start the services.
+#
+# `heal` is what the init scripts spawn (detached) when `check` fails at boot.
+
+set -u
+
+# Modules the renderer and the button watcher import, and the opkg packages that
+# provide them. mudi.py needs numpy + PIL; mudi-watch.py needs evdev. We heal all
+# three together — a partial site-packages is not a state worth modelling.
+MODULES="numpy evdev PIL"
+
+# Mirrors what install.sh has always installed. Order matters: libtiff6 must land
+# before pillow, because pillow goes in --nodeps (see below) and PIL/_imaging.so
+# links against libtiff at import time.
+#
+# python3-pillow is deliberately NOT in this list — it is installed separately
+# with --nodeps to avoid its libfreetype pulling a second copy alongside the one
+# GL's own gl-sdk4-screen-large package already provides. The cost of --nodeps is
+# that pillow's shared-lib deps are not resolved for us; libtiff6 is the only one
+# not already stock on this box (libjpeg-turbo, zlib are stock, libfreetype comes
+# from gl-sdk4-screen-large). libwebp/libopenjp2 stay absent by design: PIL
+# imports and renders fine without them, it just cannot decode those formats.
+LCD_DEPS="python3-light python3-numpy python3-urllib python3-logging python3-ctypes python3-cffi python3-evdev libtiff6"
+
+LOCK=/tmp/mudimodem-lcddeps.lock       # /var/lock is not guaranteed here; /tmp is tmpfs and always present
+STAMP=/tmp/mudimodem-lcddeps.failed   # tmpfs on purpose: a reboot earns a fresh try
+
+log() { logger -t mudimodem-lcddeps "$*"; echo "mudimodem-lcddeps: $*"; }
+
+# --- check ------------------------------------------------------------------
+# One interpreter start for the whole set. Prints nothing on success so the init
+# scripts can call it on every start without noise.
+missing_modules() {
+    for m in $MODULES; do
+        python3 -c "import $m" 2>/dev/null || echo "$m"
+    done
+}
+
+do_check() {
+    miss=$(missing_modules)
+    [ -z "$miss" ] && return 0
+    echo "$miss"
+    return 1
+}
+
+# --- install ----------------------------------------------------------------
+missing_packages() {
+    out=""
+    for p in $LCD_DEPS; do
+        opkg list-installed 2>/dev/null | grep -q "^$p " || out="$out $p"
+    done
+    # pillow is checked with the rest but installed --nodeps, so it is tracked
+    # separately and always appended last.
+    opkg list-installed 2>/dev/null | grep -q "^python3-pillow " || out="$out python3-pillow"
+    echo "$out"
+}
+
+do_install() {
+    force=""
+    miss=$(missing_packages)
+    if [ -z "$(echo "$miss" | tr -d ' ')" ]; then
+        if [ -z "$(missing_modules)" ]; then
+            log "all LCD packages already installed"
+            return 0
+        fi
+        # opkg's status DB and site-packages have diverged: every package is
+        # marked installed, yet something will not import. Trusting the DB here
+        # would return success and hand the panel straight back to the crash
+        # loop. Reinstall the whole set instead — the files are the truth.
+        log "opkg reports all packages present but modules do not import — forcing reinstall"
+        miss="$LCD_DEPS python3-pillow"
+        force="--force-reinstall"
+    fi
+    log "installing missing LCD packages:$miss"
+    opkg update >/dev/null 2>&1 || log "opkg update failed (continuing; cache may be usable)"
+    for p in $miss; do
+        if [ "$p" = python3-pillow ]; then
+            opkg install --nodeps $force python3-pillow >/dev/null 2>&1 \
+                || log "WARN: opkg install --nodeps python3-pillow failed"
+        else
+            opkg install $force "$p" >/dev/null 2>&1 || log "WARN: opkg install $p failed"
+        fi
+    done
+    # Report against the modules, not opkg's exit status: a package can install
+    # and still not import (that is exactly the libtiff6 failure mode).
+    still=$(missing_modules)
+    if [ -n "$still" ]; then
+        log "ERROR: still cannot import:$(echo $still | sed 's/^/ /')"
+        return 1
+    fi
+    log "all LCD modules import OK"
+    return 0
+}
+
+# --- heal -------------------------------------------------------------------
+# Called detached from the init scripts at boot, when the box may have no route
+# yet (this is a cellular travel router; the modem can take a minute to attach).
+wait_for_network() {
+    i=0
+    while [ $i -lt 40 ]; do          # 40 x 15s = 10 min, then give up for this boot
+        if opkg update >/dev/null 2>&1; then
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 15
+    done
+    return 1
+}
+
+do_heal() {
+    # Serialize: both init scripts can trigger a heal in the same boot, and two
+    # concurrent opkg runs corrupt the status database.
+    if command -v flock >/dev/null 2>&1; then
+        exec 9>"$LOCK" 2>/dev/null && flock -n 9 || { log "another heal is running; deferring"; return 0; }
+    fi
+
+    if [ -f "$STAMP" ]; then
+        log "a heal already failed this boot; not retrying until reboot"
+        return 1
+    fi
+
+    do_check >/dev/null && { log "nothing to heal"; return 0; }
+
+    log "LCD python modules missing after upgrade — healing"
+    if ! wait_for_network; then
+        log "ERROR: no package feed reachable after 10 min; giving up for this boot"
+        : > "$STAMP"
+        return 1
+    fi
+
+    if ! do_install; then
+        : > "$STAMP"
+        return 1
+    fi
+
+    # Only now bring the panel up. Starting earlier just re-enters the crash loop.
+    log "starting LCD services"
+    /etc/init.d/mudi-watch start 2>/dev/null
+    /etc/init.d/mudi start 2>/dev/null
+    return 0
+}
+
+case "${1:-check}" in
+    check)   do_check ;;
+    install) do_install ;;
+    heal)    do_heal ;;
+    *)       echo "usage: ${0##*/} {check|install|heal}" >&2; exit 2 ;;
+esac

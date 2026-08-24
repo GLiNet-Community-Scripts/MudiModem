@@ -36,6 +36,7 @@ FILES="
 /etc/init.d/mudimodem-speedtestd
 /usr/sbin/mudimodem-revert
 /usr/sbin/mudimodem-selfupdate
+/usr/sbin/mudimodem-lcddeps
 /usr/share/gl-validator.d/mudimodem.lua
 /usr/lib/oui-httpd/rpc/mudimodem
 /usr/sbin/mudimodem-collectd

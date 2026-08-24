@@ -203,6 +203,7 @@ ssh -o BatchMode=yes "root@$HOST" 'f=/etc/sysupgrade.conf; touch "$f"; for p in 
   /usr/lib/oui-httpd/rpc/mudimodem \
   /usr/sbin/mudimodem-revert \
   /usr/sbin/mudimodem-selfupdate \
+  /usr/sbin/mudimodem-lcddeps \
   /usr/sbin/mudimodem-collectd \
   /etc/init.d/mudimodem-collectd \
   /usr/bin/mudi.py \

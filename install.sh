@@ -128,27 +128,13 @@ if [ "$lcd_geom" = "240,320" ]; then
   if [ ! -f /etc/config/mudi ]; then
     cp_install src/lcd/mudi.config   /etc/config/mudi         0644
   fi
-  # renderer python deps: install only what's missing; pillow --nodeps avoids the
-  # libfreetype clash with gl-sdk4-screen-large. Offline-tolerant.
-  # ⚠️ Because pillow is --nodeps, its shared-lib deps are NOT pulled automatically.
-  # libtiff6 is required by PIL/_imaging.so — without it mudi.py crash-loops
-  # (issue #3: "No module named luma" was an older stack; current fail is libtiff).
-  LCD_DEPS="python3-light python3-numpy python3-urllib python3-logging python3-ctypes python3-cffi python3-evdev libtiff6"
-  lcd_missing=""
-  for p in $LCD_DEPS; do
-    opkg list-installed 2>/dev/null | grep -q "^$p " || lcd_missing="$lcd_missing $p"
-  done
-  opkg list-installed 2>/dev/null | grep -q "^python3-pillow " || lcd_missing="$lcd_missing python3-pillow"
-  if [ -n "$lcd_missing" ]; then
-    opkg update 2>/dev/null || true
-    for p in $lcd_missing; do
-      if [ "$p" = python3-pillow ]; then
-        opkg install --nodeps python3-pillow || true
-      else
-        opkg install "$p" || true
-      fi
-    done
-  fi
+  # renderer python deps. The list, the --nodeps pillow rule and the libtiff6
+  # ordering all live in mudimodem-lcddeps, which the init scripts also call to
+  # self-heal after a firmware upgrade wipes site-packages. Keeping the recipe in
+  # one place is the point: an install-path/boot-path drift is what silently
+  # broke the panel after the 4.10 FOTA.
+  cp_install src/sbin/mudimodem-lcddeps /usr/sbin/mudimodem-lcddeps 0755
+  /usr/sbin/mudimodem-lcddeps install || true
   # DEFAULT OFF: the renderer seizes /dev/fb0 from gl_screen. It is enabled only
   # from the admin "LCD Display" tab — do NOT enable or start it here.
   echo "  LCD renderer installed (disabled by default — enable from the LCD Display tab)"
@@ -176,6 +162,7 @@ for p in \
   /etc/init.d/mudimodem-speedtestd \
   /usr/sbin/mudimodem-revert \
   /usr/sbin/mudimodem-selfupdate \
+  /usr/sbin/mudimodem-lcddeps \
   /usr/share/gl-validator.d/mudimodem.lua \
   /usr/lib/oui-httpd/rpc/mudimodem \
   /usr/sbin/mudimodem-collectd \

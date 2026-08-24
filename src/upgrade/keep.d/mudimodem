@@ -22,6 +22,7 @@
 /usr/lib/mudimodem/
 /usr/sbin/mudimodem-revert
 /usr/sbin/mudimodem-selfupdate
+/usr/sbin/mudimodem-lcddeps
 /usr/sbin/mudimodem-collectd
 /usr/sbin/mudimodem-speedtestd
 /usr/bin/glbattlimit

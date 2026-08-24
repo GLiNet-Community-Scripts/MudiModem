@@ -7,7 +7,11 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 # --- LCD (default off) ---
 # pillow is installed --nodeps (libfreetype clash with gl-sdk4-screen-large), so
 # the shared libs it needs must be listed explicitly. Missing libtiff6 is issue #3.
-grep -q 'libtiff6' install.sh                   || fail "install.sh must install libtiff6 (pillow --nodeps dep; issue #3)"
+# The dep recipe moved into src/sbin/mudimodem-lcddeps so the install path and the
+# post-FOTA self-heal path cannot drift (that drift is what killed the panel after
+# the 4.10 upgrade). Assert against the script that owns it, not install.sh.
+grep -q 'libtiff6' src/sbin/mudimodem-lcddeps   || fail "mudimodem-lcddeps must install libtiff6 (pillow --nodeps dep; issue #3)"
+grep -q 'mudimodem-lcddeps install' install.sh  || fail "install.sh must delegate LCD dep install to mudimodem-lcddeps"
 grep -q 'src/lcd/mudi.py' install.sh            || fail "install.sh does not deploy mudi.py"
 grep -q 'src/lcd/mudi-watch.py' install.sh      || fail "install.sh does not deploy mudi-watch.py"
 grep -q 'src/lcd/mudi.init' install.sh          || fail "install.sh does not deploy mudi.init"

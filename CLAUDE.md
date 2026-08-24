@@ -163,6 +163,7 @@ return { get_config = function(args) ... end, set_config = function(args) ... en
 | `/etc/nginx/gl-conf.d/mudimodem.conf` | aliases SPA `/views/gl-sdk4-ui-mudimodem*` + `/mudimodem/` onto the persist tree |
 | `/usr/share/oui/menu.d/mudimodem.json` | menu registration **+ `global_sockets`** (§2) — the read path |
 | `/usr/sbin/mudimodem-revert` | detached auto-revert watchdog + ssh panic-restore |
+| `/usr/sbin/mudimodem-lcddeps` | LCD python dep guard + post-FOTA self-heal (§9); **single source of truth for the dep list** — `install.sh` and both LCD init scripts call it |
 | `/www/mudimodem/at-library.json.gz` | community AT command library (§7a); static, axios-fetched |
 | `/usr/lib/mudimodem/mudimodem-at.py` | our own AT channel on `/dev/at_mdm0` (§7a); backend spawns it |
 | `/www/views/gl-sdk4-ui-mudimodem-console.common.js.gz` | the AT-console tab chunk (lazy-loaded) |
@@ -552,6 +553,19 @@ router and searchable. It's a differentiator no router UI has.
   chunks at `/usr/share/mudimodem/www/` + `/etc/nginx/gl-conf.d/mudimodem.conf` (aliases the
   SPA URLs onto that tree). Requires **Keep settings** (`-k`). Factory reset still wipes.
 - `/etc/sysupgrade.conf` is still registered for a hypothetical non-e5800 sysupgrade path.
+- ⚠️⚠️ **`keep.d` preserves our FILES, not our RUNTIME (learned the hard way 2026-08-24).** The
+  LCD renderer imports `numpy`/`PIL`, the button watcher imports `evdev` — all **opkg packages in
+  `/usr/lib/python3.N/site-packages`, outside our tree and therefore not in `keep.d`**. After the
+  4.8.5 → 4.10.0 FOTA every MudiModem file came back and `site-packages` held nothing but
+  `README.txt`; both LCD services crash-looped on `ModuleNotFoundError` while `gl_screen` kept the
+  panel. **The web admin was completely unaffected**, which is exactly what makes this look like an
+  LCD bug instead of an upgrade artefact — check `python3 -c "import numpy, evdev, PIL"` first.
+  Fix: **`/usr/sbin/mudimodem-lcddeps`** (§5) — the init scripts run `check` before opening a procd
+  instance and spawn `heal` if it fails, so a dep-less box **defers** instead of crash-looping.
+  ⇒ **Any new add-on dependency that is an opkg package needs the same treatment; listing it in
+  `keep.d` is the wrong instinct** — 30 MB of numpy would land on `/dev/mmcblk0p66`, the partition
+  that filled to 100% (a runaway `ipacm_log.txt`) and silently killed a firmware upgrade on
+  2026-08-18, and it breaks anyway the moment a firmware ships a different Python minor.
 - Band/cell lock persists in **modem NV** — it survives reflash *and* factory reset. The panic
   restore is the only way back.
 - The Mudi is a travel router on cellular — reachability is intermittent by design.
@@ -579,6 +593,7 @@ MudiModem/
 │   ├── at-library.snapshot.json ← baked fallback; sources in kevinherzig/mudi7-at-library (§7a)
 │   ├── rpc/mudimodem            ← backend, incl. get_lcd/set_lcd (§12, 2026-07-24 merge)
 │   ├── sbin/mudimodem-collectd  ← single modem-read daemon; broadcasts over Unix socket + latest.json
+│   ├── sbin/mudimodem-lcddeps   ← LCD python dep guard + post-FOTA self-heal (§9)
 │   ├── upgrade/keep.d/mudimodem ← A/B FOTA keep list (e5800; see §9)
 │   ├── nginx/mudimodem.conf     ← gl-conf.d alias: SPA URLs → /usr/share/mudimodem/www
 │   └── lcd/                     ← vendored MudiUI front-LCD renderer (mudi.py, mudi-watch.py,
@@ -589,6 +604,7 @@ MudiModem/
 │   ├── verify.sh                ← on-device assertions (files, JSON parse, gzip_static, eval, backend, watchdog)
 │   └── mudimodem-at.py          ← our own AT channel on /dev/at_mdm0 (Python stdlib; Phase 3 console)
 ├── test/chunk.test.js           ← local Node test: evals the chunk exactly as the SPA does
+├── test/lcddeps.test.sh         ← stubbed opkg/python3: dep guard, ordering, force-reinstall, deferral
 ├── test/battery-chunk.test.js       ← evals the battery chunk; lane domains, reduce, gaps
 ├── test/backend-battery-history.test.lua
 ├── test/test_collectd.py        ← collectd broadcast socket + latest.json test
@@ -816,5 +832,17 @@ MudiModem/
 - ✅ **A/B FOTA persist (2026-08-18).** e5800 ignores `/etc/sysupgrade.conf`. Persistence is
   `/lib/upgrade/keep.d/mudimodem` + `/usr/share/mudimodem/` + nginx alias (same pattern as
   ts-fix on this box). Still not done: a boot hook for the watchdog `boot-check`, and an ipk.
+- ✅ **LCD dead after the 4.10 FOTA — root-caused and fixed (2026-08-24).** Symptom: the front-panel
+  cellular page never appeared; `gl_screen` had the panel. **Not** a renderer bug — the A/B FOTA
+  (4.8.5 → **4.10.0**) wiped every opkg-installed Python package (`site-packages` = `README.txt`
+  only), so `mudi.py` died on `numpy` and `mudi-watch.py` on `evdev`. Everything web-side was green
+  throughout (`get_menu_list` returned `level:1`, chunks served 200, collectd was sampling) — that
+  asymmetry is the tell. Repaired live (packages reinstalled, panel verified by dumping `/dev/fb0`
+  to PNG), then hardened: **`src/sbin/mudimodem-lcddeps`** now owns the dep recipe, `install.sh`
+  delegates to it, and both init scripts `check` before `procd_open_instance`, spawning a detached
+  `heal` (waits ≤10 min for the feed, installs, then starts the services) instead of crash-looping.
+  Verified on the box by hiding `numpy` and restarting: **no procd instance, zero
+  `ModuleNotFoundError`, one log line.** `heal` also **`--force-reinstall`s** when opkg's status DB
+  claims the packages are present but the modules still won't import. See §9 for why not `keep.d`.
 - 🧹 `tools/verify.sh` still only checks the menu JSON *parses*; it should also assert
   `get_menu_list` returns it at `level:1` (§8 has the stub).
